@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RequestError } from "@octokit/request-error";
-import type { OctokitRequest } from "../../lib/auth";
+import type { OctokitRequest } from "../../lib/auth.js";
 import {
   handleProvision,
   type ProvisionConfig,
   type ProvisionDeps,
-} from "../../lib/handlers/provision";
-import { VercelApiError, type VercelClient } from "../../lib/vercel-client";
-import { FakeKv } from "../fake-kv";
+} from "../../lib/handlers/provision.js";
+import { VercelApiError, type VercelClient } from "../../lib/vercel-client.js";
+import { FakeKv } from "../fake-kv.js";
 
 const CONFIG: ProvisionConfig = {
   org: "Bible-Innovation-Lab",

@@ -5,8 +5,8 @@ import {
   getClaim,
   releaseAppId,
   type ClaimRecord,
-} from "../lib/kv";
-import { FakeKv } from "./fake-kv";
+} from "../lib/kv.js";
+import { FakeKv } from "./fake-kv.js";
 
 let now = 1_700_000_000_000;
 let kv: FakeKv;

@@ -4,7 +4,7 @@ import {
   createVercelClient,
   type FetchLike,
   type VercelConfig,
-} from "../lib/vercel-client";
+} from "../lib/vercel-client.js";
 
 const TOKEN = "vck_unittestfaketokendoesnotleak";
 const TEAM = "bible-innovation-lab";

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@octokit/request-error";
-import type { OctokitRequest } from "../../lib/auth";
+import type { OctokitRequest } from "../../lib/auth.js";
 import {
   handleTeardown,
   type TeardownConfig,
   type TeardownDeps,
-} from "../../lib/handlers/teardown";
-import { VercelApiError, type VercelClient } from "../../lib/vercel-client";
-import { FakeKv } from "../fake-kv";
+} from "../../lib/handlers/teardown.js";
+import { VercelApiError, type VercelClient } from "../../lib/vercel-client.js";
+import { FakeKv } from "../fake-kv.js";
 
 const CONFIG: TeardownConfig = {
   org: "Bible-Innovation-Lab",

@@ -16,11 +16,11 @@
 //        state: "pending", … }
 //      - confirmed (has project_id) → 200 { claimed: true, state: "active", … }
 
-import { authenticateAdmin, AuthError, parseBearerToken } from "../auth";
-import type { OctokitRequest } from "../auth";
-import { getClaim, type KvClient } from "../kv";
-import { log } from "../log";
-import { validateAppId } from "../validation";
+import { authenticateAdmin, AuthError, parseBearerToken } from "../auth.js";
+import type { OctokitRequest } from "../auth.js";
+import { getClaim, type KvClient } from "../kv.js";
+import { log } from "../log.js";
+import { validateAppId } from "../validation.js";
 
 export interface StatusConfig {
   org: string;

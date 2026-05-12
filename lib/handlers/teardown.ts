@@ -20,12 +20,12 @@
 //      can retry; surface the provider error code
 
 import { z } from "zod";
-import { AuthError, authenticateAdmin, parseBearerToken } from "../auth";
-import type { OctokitRequest } from "../auth";
-import { getClaim, releaseAppId, type KvClient } from "../kv";
-import { log } from "../log";
-import { validateAppId } from "../validation";
-import { VercelApiError, type VercelClient } from "../vercel-client";
+import { AuthError, authenticateAdmin, parseBearerToken } from "../auth.js";
+import type { OctokitRequest } from "../auth.js";
+import { getClaim, releaseAppId, type KvClient } from "../kv.js";
+import { log } from "../log.js";
+import { validateAppId } from "../validation.js";
+import { VercelApiError, type VercelClient } from "../vercel-client.js";
 
 const BodySchema = z.object({
   app_id: z.string(),

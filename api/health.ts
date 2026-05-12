@@ -3,7 +3,7 @@
 // lives in lib/handlers/health.ts.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { handleHealth } from "../lib/handlers/health";
+import { handleHealth } from "../lib/handlers/health.js";
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {

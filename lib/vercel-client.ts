@@ -10,7 +10,7 @@
 // thin wrapper is easier to audit when this is the service holding the admin
 // token.
 
-import { redact } from "./log";
+import { redact } from "./log.js";
 
 const DEFAULT_BASE_URL = "https://api.vercel.com";
 const DEFAULT_TIMEOUT_MS = 30_000;

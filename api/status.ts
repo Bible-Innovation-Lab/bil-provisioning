@@ -4,8 +4,8 @@
 
 import { kv } from "@vercel/kv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadServiceConfig } from "../lib/env";
-import { handleStatus } from "../lib/handlers/status";
+import { loadServiceConfig } from "../lib/env.js";
+import { handleStatus } from "../lib/handlers/status.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {

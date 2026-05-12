@@ -10,7 +10,7 @@ import {
   verifyGitHubToken,
   type AuthConfig,
   type OctokitRequest,
-} from "../lib/auth";
+} from "../lib/auth.js";
 
 const CONFIG: AuthConfig = {
   org: "Bible-Innovation-Lab",
@@ -275,7 +275,7 @@ describe("integration with defaultRequest (smoke)", () => {
   });
 
   it("module loads with no network access", async () => {
-    const mod = await import("../lib/auth");
+    const mod = await import("../lib/auth.js");
     expect(typeof mod.verifyGitHubToken).toBe("function");
     expect(typeof mod.parseBearerToken).toBe("function");
   });

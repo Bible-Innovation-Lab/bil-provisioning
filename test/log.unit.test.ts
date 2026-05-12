@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redact, redactObject } from "../lib/log";
+import { redact, redactObject } from "../lib/log.js";
 
 describe("redact — known token shapes", () => {
   it("redacts Vercel tokens (vck_)", () => {

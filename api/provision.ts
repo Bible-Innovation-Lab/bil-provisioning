@@ -4,9 +4,9 @@
 
 import { kv } from "@vercel/kv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { loadServiceConfig } from "../lib/env";
-import { handleProvision } from "../lib/handlers/provision";
-import { createVercelClient } from "../lib/vercel-client";
+import { loadServiceConfig } from "../lib/env.js";
+import { handleProvision } from "../lib/handlers/provision.js";
+import { createVercelClient } from "../lib/vercel-client.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {

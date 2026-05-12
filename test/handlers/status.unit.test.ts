@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { RequestError } from "@octokit/request-error";
-import type { OctokitRequest } from "../../lib/auth";
+import type { OctokitRequest } from "../../lib/auth.js";
 import {
   handleStatus,
   type StatusConfig,
   type StatusDeps,
-} from "../../lib/handlers/status";
-import { FakeKv } from "../fake-kv";
+} from "../../lib/handlers/status.js";
+import { FakeKv } from "../fake-kv.js";
 
 const CONFIG: StatusConfig = {
   org: "Bible-Innovation-Lab",

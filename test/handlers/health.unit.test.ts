@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleHealth } from "../../lib/handlers/health";
+import { handleHealth } from "../../lib/handlers/health.js";
 
 describe("handleHealth", () => {
   it("returns 200 with status ok and an ISO timestamp", () => {

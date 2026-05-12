@@ -17,18 +17,18 @@
 //   9. log structured event regardless of outcome
 
 import { z } from "zod";
-import { AuthError, authenticateOrgMember, parseBearerToken } from "../auth";
-import type { OctokitRequest } from "../auth";
+import { AuthError, authenticateOrgMember, parseBearerToken } from "../auth.js";
+import type { OctokitRequest } from "../auth.js";
 import {
   claimAppId,
   confirmClaim,
   getClaim,
   releaseAppId,
   type KvClient,
-} from "../kv";
-import { log } from "../log";
-import { validateAppId } from "../validation";
-import { VercelApiError, type VercelClient } from "../vercel-client";
+} from "../kv.js";
+import { log } from "../log.js";
+import { validateAppId } from "../validation.js";
+import { VercelApiError, type VercelClient } from "../vercel-client.js";
 
 const BodySchema = z.object({
   repo: z.string().regex(/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/, {

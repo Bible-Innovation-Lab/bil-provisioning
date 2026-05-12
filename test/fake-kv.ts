@@ -2,7 +2,7 @@
 // for unit tests. Not for production use — single-process only, no
 // concurrency safety beyond JS's single-threaded event loop.
 
-import type { KvClient } from "../lib/kv";
+import type { KvClient } from "../lib/kv.js";
 
 interface Entry {
   value: unknown;

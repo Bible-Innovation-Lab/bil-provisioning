@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDenylisted, validateAppId } from "../lib/validation";
+import { isDenylisted, validateAppId } from "../lib/validation.js";
 
 describe("validateAppId — accepts", () => {
   it.each([

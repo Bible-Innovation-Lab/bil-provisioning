@@ -2,7 +2,7 @@
 // into one transactional flow. Pure async function — all I/O is injected via
 // deps, so tests don't need a Hono context, a real HTTP server, or env vars.
 //
-// Flow (matches docs/PRD.md § F1 + docs/implementation-plan.md § Phase 4):
+// Flow (docs/PRD.md § F1 + docs/implementation-plan.md § Phase 4):
 //   1. parse Bearer token
 //   2. authenticate (verify token + org member)
 //   3. parse + validate body shape
@@ -11,10 +11,19 @@
 //   6. atomically claim app_id in KV (5-min TTL)
 //      - on collision: check existing record for idempotency (same repo →
 //        return 409 with existing project_id)
-//   7. try: createProject → addDomain → setEnv × 2 → pollCertReady →
-//      confirmClaim → 201
-//   8. catch: releaseAppId → 500 with provider error code
+//   7. try: createProject → addDomain → setEnv × 3 → createDeployment →
+//      pollDeploymentReady → pollCertReady → confirmClaim → 201
+//   8. catch: deleteProject (best-effort) → releaseAppId → 500
 //   9. log structured event regardless of outcome
+//
+// Note on step 7: linking a Vercel project to a GitHub repo via createProject
+// does NOT auto-trigger a build. Without an explicit createDeployment, the
+// project exists with zero deployments and the returned URL resolves to a
+// 404 page. Discovered 2026-05-12 during the first real /provision call
+// against bible-trivia. The deploy + poll keeps /provision a synchronous,
+// converging contract: "201 means the URL really serves your app." On any
+// failure after createProject, the catch block deletes the orphan project
+// so the next retry starts clean.
 
 import { z } from "zod";
 import { AuthError, authenticateOrgMember, parseBearerToken } from "../auth.js";
@@ -160,12 +169,33 @@ export async function handleProvision(
     return { status: 400, body: { error: "app_id_taken" } };
   }
 
-  // 7. Vercel calls — rollback the claim on any failure.
-  let projectId: string;
+  // 7. Vercel calls — rollback the claim AND the project on any failure
+  // after createProject. Without project rollback the next /provision retry
+  // would 409 on the orphan project name.
+  let projectId: string | null = null;
   try {
-    const project = await deps.vercel.createProject({ name: app_id, repo });
+    const project = await deps.vercel.createProject({
+      name: app_id,
+      repo,
+      // Vercel's defaults are wrong for our purposes — see CreateProjectInput
+      // in vercel-client.ts. These match the launchpad's build expectations.
+      nodeVersion: "22.x",
+      framework: "nextjs",
+    });
     projectId = project.id;
     logFields.project_id = projectId;
+
+    if (project.repoId === null) {
+      // Should be impossible — we passed gitRepository, Vercel always returns
+      // link.repoId on success. Belt-and-braces so the deploy step doesn't
+      // silently misfire if Vercel's response shape changes.
+      throw new VercelApiError(
+        502,
+        "missing_repo_id",
+        "POST /v9/projects",
+        "Vercel project returned without a linked repoId"
+      );
+    }
 
     await deps.vercel.addDomain(projectId, domain);
     await deps.vercel.setEnv(projectId, "APP_ID", app_id, ["production", "preview"], "plain");
@@ -183,8 +213,21 @@ export async function handleProvision(
       "plain"
     );
 
+    // Trigger the first deployment. createProject + git-link does NOT
+    // auto-deploy; the URL stays 404 until something pushes to main or
+    // somebody POSTs /v13/deployments. This is the somebody.
+    const deployment = await deps.vercel.createDeployment({
+      projectId,
+      name: app_id,
+      repoId: project.repoId,
+      ref: "main",
+    });
+    logFields.deployment_id = deployment.id;
+    await deps.vercel.pollDeploymentReady(deployment.id, { timeoutMs: 300_000 });
+
     // Best-effort: poll for cert readiness. Failure here doesn't fail the
-    // provision — Vercel will continue provisioning the cert in the background.
+    // provision — Vercel keeps provisioning the cert in the background and
+    // the URL becomes serveable within a few seconds after.
     await deps.vercel
       .pollCertReady(domain, { timeoutMs: 60_000 })
       .catch((e) => log("warn", "provision.cert_poll_failed", { ...logFields, error: String(e) }));
@@ -194,6 +237,20 @@ export async function handleProvision(
     log("info", "provision.success", { ...logFields });
     return { status: 201, body: { url, project_id: projectId } };
   } catch (e) {
+    // Project rollback first (best-effort), then claim release. Doing them
+    // in this order means a deleteProject failure still results in the claim
+    // being freed — students aren't locked out of the app_id by a Vercel
+    // hiccup during cleanup.
+    if (projectId !== null) {
+      await deps.vercel
+        .deleteProject(projectId)
+        .catch((err) =>
+          log("warn", "provision.rollback_delete_failed", {
+            ...logFields,
+            error: String(err),
+          })
+        );
+    }
     await releaseAppId(app_id, deps.kv).catch(() => undefined);
     if (e instanceof VercelApiError) {
       log("error", "provision.vercel_error", {

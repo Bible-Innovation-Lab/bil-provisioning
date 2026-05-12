@@ -54,12 +54,21 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
     createProject: record("createProject", async ({ name }: { name: string }) => ({
       id: `prj_${name}`,
       name,
+      repoId: 12345,
     })),
     addDomain: record("addDomain", async () => undefined),
     setEnv: record("setEnv", async () => undefined),
     deleteProject: record("deleteProject", async () => undefined),
     removeDomain: record("removeDomain", async () => undefined),
     pollCertReady: record("pollCertReady", async () => true),
+    createDeployment: record(
+      "createDeployment",
+      async (input: { projectId: string }) => ({
+        id: `dpl_${input.projectId}`,
+        url: "preview.vercel.app",
+      })
+    ),
+    pollDeploymentReady: record("pollDeploymentReady", async () => true),
   };
   return { ...base, ...overrides } as VercelClient & { __calls?: typeof calls };
 }
@@ -239,12 +248,29 @@ describe("handleProvision — KV claim", () => {
 });
 
 describe("handleProvision — happy path", () => {
-  it("creates project, attaches domain, sets env, confirms claim, returns 201", async () => {
+  it("creates project, attaches domain, sets env, triggers + awaits deploy, confirms claim, returns 201", async () => {
     const kv = new FakeKv();
     const setEnvCalls: unknown[][] = [];
+    const createProjectCalls: unknown[][] = [];
+    const createDeploymentCalls: unknown[][] = [];
+    const pollDeploymentCalls: unknown[][] = [];
     const vercel = fakeVercelClient({
+      createProject: vi.fn(async (...args: unknown[]) => {
+        createProjectCalls.push(args);
+        const input = args[0] as { name: string };
+        return { id: `prj_${input.name}`, name: input.name, repoId: 12345 };
+      }),
       setEnv: vi.fn(async (...args: unknown[]) => {
         setEnvCalls.push(args);
+      }),
+      createDeployment: vi.fn(async (...args: unknown[]) => {
+        createDeploymentCalls.push(args);
+        const input = args[0] as { projectId: string };
+        return { id: `dpl_${input.projectId}`, url: "preview.vercel.app" };
+      }),
+      pollDeploymentReady: vi.fn(async (...args: unknown[]) => {
+        pollDeploymentCalls.push(args);
+        return true;
       }),
     });
 
@@ -273,6 +299,26 @@ describe("handleProvision — happy path", () => {
     // setEnv was called for APP_ID, POSTHOG_KEY, POSTHOG_HOST.
     const keys = setEnvCalls.map((c) => c[1]);
     expect(keys).toEqual(["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST"]);
+
+    // createProject was called with nodeVersion + framework explicit.
+    expect(createProjectCalls[0][0]).toMatchObject({
+      name: "bible-trivia",
+      repo: "Bible-Innovation-Lab/bible-trivia",
+      nodeVersion: "22.x",
+      framework: "nextjs",
+    });
+
+    // Deployment was triggered against main + repoId from createProject.
+    expect(createDeploymentCalls).toHaveLength(1);
+    expect(createDeploymentCalls[0][0]).toMatchObject({
+      projectId: "prj_bible-trivia",
+      name: "bible-trivia",
+      repoId: 12345,
+      ref: "main",
+    });
+    // And we waited for it before returning 201.
+    expect(pollDeploymentCalls).toHaveLength(1);
+    expect(pollDeploymentCalls[0][0]).toBe("dpl_prj_bible-trivia");
   });
 
   it("cert-poll failure does not fail the request", async () => {
@@ -293,12 +339,14 @@ describe("handleProvision — happy path", () => {
 });
 
 describe("handleProvision — rollback on Vercel failure", () => {
-  it("releases the claim when createProject fails", async () => {
+  it("releases the claim when createProject fails (no project to delete)", async () => {
     const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
     const vercel = fakeVercelClient({
       createProject: vi.fn(async () => {
         throw new VercelApiError(409, "name_already_taken", "POST /v9/projects", "boom");
       }),
+      deleteProject,
     });
 
     const result = await handleProvision(
@@ -311,16 +359,19 @@ describe("handleProvision — rollback on Vercel failure", () => {
 
     expect(result.status).toBe(500);
     expect(result.body).toEqual({ error: "vercel_api_error" });
-    // The claim should be gone so retry is possible.
     expect(await kv.get("app_id:new-app")).toBeNull();
+    // No project was created, so no deletion should be attempted.
+    expect(deleteProject).not.toHaveBeenCalled();
   });
 
-  it("releases the claim when addDomain fails mid-flow", async () => {
+  it("deletes the orphan project AND releases the claim when addDomain fails", async () => {
     const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
     const vercel = fakeVercelClient({
       addDomain: vi.fn(async () => {
         throw new VercelApiError(503, "service_unavailable", "POST /v10/projects/x/domains", "down");
       }),
+      deleteProject,
     });
 
     const result = await handleProvision(
@@ -333,6 +384,87 @@ describe("handleProvision — rollback on Vercel failure", () => {
 
     expect(result.status).toBe(500);
     expect(await kv.get("app_id:retryable")).toBeNull();
+    expect(deleteProject).toHaveBeenCalledWith("prj_retryable");
+  });
+
+  it("deletes the orphan project AND releases the claim when createDeployment fails", async () => {
+    const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
+    const vercel = fakeVercelClient({
+      createDeployment: vi.fn(async () => {
+        throw new VercelApiError(500, "internal", "POST /v13/deployments", "boom");
+      }),
+      deleteProject,
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/deploy-fail", app_id: "deploy-fail" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(await kv.get("app_id:deploy-fail")).toBeNull();
+    expect(deleteProject).toHaveBeenCalledWith("prj_deploy-fail");
+  });
+
+  it("deletes the orphan project AND releases the claim when the deploy ends in ERROR state", async () => {
+    const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
+    const vercel = fakeVercelClient({
+      pollDeploymentReady: vi.fn(async () => {
+        // Mirrors what the real client throws when readyState lands on ERROR.
+        throw new VercelApiError(
+          502,
+          "deployment_error",
+          "GET /v13/deployments/dpl_x",
+          "Build failed: TypeError in app/page.tsx"
+        );
+      }),
+      deleteProject,
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/build-bad", app_id: "build-bad" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(await kv.get("app_id:build-bad")).toBeNull();
+    expect(deleteProject).toHaveBeenCalledWith("prj_build-bad");
+  });
+
+  it("still releases the claim when project rollback itself fails (deleteProject 5xx)", async () => {
+    // The catch block should swallow deleteProject errors so the KV claim
+    // ALWAYS gets released — students must not be locked out of an app_id
+    // by a Vercel cleanup hiccup.
+    const kv = new FakeKv();
+    const vercel = fakeVercelClient({
+      addDomain: vi.fn(async () => {
+        throw new VercelApiError(503, "service_unavailable", "POST /v10/projects/x/domains", "down");
+      }),
+      deleteProject: vi.fn(async () => {
+        throw new VercelApiError(500, "internal", "DELETE /v9/projects/x", "still broken");
+      }),
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/stubborn", app_id: "stubborn" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(await kv.get("app_id:stubborn")).toBeNull();
   });
 
   it("returns 500 internal on unexpected (non-VercelApiError) failure", async () => {
@@ -353,6 +485,32 @@ describe("handleProvision — rollback on Vercel failure", () => {
     expect(result.status).toBe(500);
     expect(result.body).toEqual({ error: "internal" });
     expect(await kv.get("app_id:explody")).toBeNull();
+  });
+
+  it("fails fast if createProject returns no repoId (cannot trigger deploy)", async () => {
+    const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
+    const vercel = fakeVercelClient({
+      createProject: vi.fn(async ({ name }: { name: string }) => ({
+        id: `prj_${name}`,
+        name,
+        repoId: null,
+      })),
+      deleteProject,
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/no-repo-id", app_id: "no-repo-id" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(await kv.get("app_id:no-repo-id")).toBeNull();
+    expect(deleteProject).toHaveBeenCalledWith("prj_no-repo-id");
   });
 });
 

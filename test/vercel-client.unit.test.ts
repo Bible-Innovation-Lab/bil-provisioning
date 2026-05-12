@@ -32,18 +32,31 @@ function emptyResponse(status = 204): Response {
 }
 
 describe("createProject", () => {
-  it("POSTs to /v9/projects with teamId, body, and Bearer auth", async () => {
+  it("POSTs to /v9/projects with teamId, body, and Bearer auth; surfaces repoId from link", async () => {
     const fetchMock = vi.fn<FetchLike>(async () =>
-      jsonResponse({ id: "prj_new123", name: "bible-trivia" }, 200)
+      jsonResponse(
+        {
+          id: "prj_new123",
+          name: "bible-trivia",
+          link: { type: "github", repoId: 12345, repo: "bible-trivia" },
+        },
+        200
+      )
     );
     const client = makeClient(fetchMock);
 
     const result = await client.createProject({
       name: "bible-trivia",
       repo: "Bible-Innovation-Lab/bible-trivia",
+      nodeVersion: "22.x",
+      framework: "nextjs",
     });
 
-    expect(result).toEqual({ id: "prj_new123", name: "bible-trivia" });
+    expect(result).toEqual({
+      id: "prj_new123",
+      name: "bible-trivia",
+      repoId: 12345,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchMock.mock.calls[0];
@@ -54,8 +67,25 @@ describe("createProject", () => {
     expect((init?.headers as Record<string, string>)?.authorization).toBe(`Bearer ${TOKEN}`);
     expect(JSON.parse(init?.body as string)).toEqual({
       name: "bible-trivia",
+      nodeVersion: "22.x",
+      framework: "nextjs",
       gitRepository: { type: "github", repo: "Bible-Innovation-Lab/bible-trivia" },
     });
+  });
+
+  it("returns repoId: null when Vercel omits the link object", async () => {
+    // Belt-and-braces — handler treats this as fatal (cannot trigger deploy
+    // without repoId), but the client itself doesn't throw.
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ id: "prj_new", name: "x" }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const result = await client.createProject({
+      name: "x",
+      repo: "Bible-Innovation-Lab/x",
+    });
+    expect(result.repoId).toBeNull();
   });
 
   it("throws VercelApiError with vendor error code on 4xx", async () => {
@@ -249,6 +279,126 @@ describe("pollCertReady", () => {
 
     // 100ms deadline — first poll, sleep, second poll, etc., bounded.
     const ok = await client.pollCertReady("never.example.com", { timeoutMs: 100 });
+    expect(ok).toBe(false);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("createDeployment", () => {
+  it("POSTs to /v13/deployments with project + gitSource(repoId, ref, type=github)", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(
+        { id: "dpl_abc123", url: "bible-trivia-x9-bil.vercel.app" },
+        200
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    const result = await client.createDeployment({
+      projectId: "prj_abc",
+      name: "bible-trivia",
+      repoId: 12345,
+      ref: "main",
+    });
+
+    expect(result).toEqual({
+      id: "dpl_abc123",
+      url: "bible-trivia-x9-bil.vercel.app",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      `https://api.vercel.com/v13/deployments?teamId=${TEAM}`
+    );
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      name: "bible-trivia",
+      project: "prj_abc",
+      target: "production",
+      gitSource: { type: "github", repoId: 12345, ref: "main" },
+    });
+  });
+
+  it("throws missing_deployment_id when Vercel returns no id", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({}, 200));
+    const client = makeClient(fetchMock);
+
+    await expect(
+      client.createDeployment({
+        projectId: "prj_abc",
+        name: "x",
+        repoId: 1,
+        ref: "main",
+      })
+    ).rejects.toMatchObject({ code: "missing_deployment_id" });
+  });
+});
+
+describe("pollDeploymentReady", () => {
+  it("returns true immediately when first poll reports READY", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ readyState: "READY" }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollDeploymentReady("dpl_x");
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries while BUILDING, returns true on READY", async () => {
+    // Two states only — the production initial poll delay is 2s (exponential),
+    // and we don't want the test to take > 5s. The retry path itself is the
+    // assertion target; longer chains don't add coverage.
+    vi.useRealTimers();
+    const states = [{ readyState: "BUILDING" }, { readyState: "READY" }];
+    let i = 0;
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(states[i++] ?? { readyState: "READY" }, 200)
+    );
+    const client = makeClient(fetchMock);
+    const ok = await client.pollDeploymentReady("dpl_slow", { timeoutMs: 60_000 });
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws VercelApiError with deployment_error when readyState is ERROR", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(
+        { readyState: "ERROR", errorMessage: "Build failed: missing module foo" },
+        200
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    await expect(
+      client.pollDeploymentReady("dpl_bad")
+    ).rejects.toMatchObject({
+      name: "VercelApiError",
+      code: "deployment_error",
+      message: "Build failed: missing module foo",
+    });
+  });
+
+  it("throws deployment_canceled when readyState is CANCELED", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ readyState: "CANCELED", errorMessage: null }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    await expect(
+      client.pollDeploymentReady("dpl_cancelled")
+    ).rejects.toMatchObject({ code: "deployment_canceled" });
+  });
+
+  it("returns false on timeout while still BUILDING", async () => {
+    vi.useRealTimers();
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ readyState: "BUILDING" }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollDeploymentReady("dpl_never", { timeoutMs: 100 });
     expect(ok).toBe(false);
     expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
   });

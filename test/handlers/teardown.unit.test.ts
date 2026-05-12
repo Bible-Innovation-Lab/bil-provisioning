@@ -48,12 +48,18 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
     createProject: vi.fn(async ({ name }: { name: string }) => ({
       id: `prj_${name}`,
       name,
+      repoId: 12345,
     })),
     addDomain: vi.fn(async () => undefined),
     setEnv: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
     removeDomain: vi.fn(async () => undefined),
     pollCertReady: vi.fn(async () => true),
+    createDeployment: vi.fn(async (input: { projectId: string }) => ({
+      id: `dpl_${input.projectId}`,
+      url: "preview.vercel.app",
+    })),
+    pollDeploymentReady: vi.fn(async () => true),
   };
   return { ...base, ...overrides } as VercelClient;
 }

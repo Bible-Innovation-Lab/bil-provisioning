@@ -42,11 +42,49 @@ export type EnvType = "encrypted" | "plain" | "sensitive";
 export interface CreateProjectInput {
   name: string;
   repo: string; // "owner/repo" — Bible-Innovation-Lab/<app-id>
+  // Vercel's project-creation defaults are unsuitable for our purposes:
+  //   - nodeVersion defaults to "24.x" which Vercel itself rejects at build
+  //   - framework defaults to null which prevents framework-specific build
+  //     optimizations (next.js cache splits, etc.)
+  // Both are settable post-hoc via PATCH /v9/projects/{id}, but doing it at
+  // create-time is one less round-trip and one less failure mode.
+  nodeVersion?: string;
+  framework?: string | null;
 }
 
 export interface CreateProjectResult {
   id: string;
   name: string;
+  // The link.repoId is required by POST /v13/deployments to identify the
+  // git source. We surface it here so the caller doesn't need a second
+  // round-trip to look it up.
+  repoId: number | null;
+}
+
+export interface CreateDeploymentInput {
+  projectId: string;
+  name: string; // typically the same as the project name (e.g. "bible-trivia")
+  repoId: number;
+  ref: string; // git ref to deploy, usually "main"
+  target?: "production" | "staging";
+}
+
+export interface CreateDeploymentResult {
+  id: string; // dpl_…
+  url: string; // Vercel-assigned hostname (no scheme)
+}
+
+export type DeploymentReadyState =
+  | "QUEUED"
+  | "INITIALIZING"
+  | "BUILDING"
+  | "READY"
+  | "ERROR"
+  | "CANCELED";
+
+export interface DeploymentStatus {
+  readyState: DeploymentReadyState;
+  errorMessage: string | null;
 }
 
 export interface VercelDomainConfig {
@@ -82,6 +120,11 @@ export interface VercelClient {
   deleteProject(projectId: string): Promise<void>;
   removeDomain(projectId: string, domain: string): Promise<void>;
   pollCertReady(domain: string, opts?: { timeoutMs?: number }): Promise<boolean>;
+  createDeployment(input: CreateDeploymentInput): Promise<CreateDeploymentResult>;
+  pollDeploymentReady(
+    deploymentId: string,
+    opts?: { timeoutMs?: number }
+  ): Promise<boolean>;
 }
 
 export function createVercelClient(config: VercelConfig): VercelClient {
@@ -164,9 +207,17 @@ export function createVercelClient(config: VercelConfig): VercelClient {
   }
 
   return {
-    async createProject({ name, repo }) {
-      const { data } = await request<CreateProjectResult>("POST", "/v9/projects", {
+    async createProject({ name, repo, nodeVersion, framework }) {
+      // Raw Vercel response shape — wider than CreateProjectResult.
+      type ApiResp = {
+        id?: string;
+        name?: string;
+        link?: { repoId?: number } | null;
+      };
+      const { data } = await request<ApiResp>("POST", "/v9/projects", {
         name,
+        nodeVersion,
+        framework,
         gitRepository: {
           type: "github",
           repo,
@@ -180,7 +231,11 @@ export function createVercelClient(config: VercelConfig): VercelClient {
           "Vercel returned no project id"
         );
       }
-      return { id: data.id, name: data.name };
+      return {
+        id: data.id,
+        name: data.name ?? name,
+        repoId: data.link?.repoId ?? null,
+      };
     },
 
     async addDomain(projectId, domain) {
@@ -233,6 +288,55 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         if (remaining <= 0) break;
         await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remaining)));
         delayMs = Math.min(delayMs * 2, 8_000);
+      }
+      return false;
+    },
+
+    async createDeployment({ projectId, name, repoId, ref, target = "production" }) {
+      type ApiResp = { id?: string; url?: string };
+      const { data } = await request<ApiResp>("POST", "/v13/deployments", {
+        name,
+        project: projectId,
+        target,
+        gitSource: { type: "github", repoId, ref },
+      });
+      if (!data?.id) {
+        throw new VercelApiError(
+          502,
+          "missing_deployment_id",
+          "POST /v13/deployments",
+          "Vercel returned no deployment id"
+        );
+      }
+      return { id: data.id, url: data.url ?? "" };
+    },
+
+    async pollDeploymentReady(deploymentId, opts = {}) {
+      // Build time for a small Next.js app is typically 30-90s. 5 min covers
+      // cold caches and queueing. Throw on ERROR/CANCELED so the handler can
+      // roll back; return false only on timeout.
+      const timeoutMs = opts.timeoutMs ?? 300_000;
+      const deadline = Date.now() + timeoutMs;
+      let delayMs = 2_000;
+      while (Date.now() < deadline) {
+        const { data } = await request<DeploymentStatus>(
+          "GET",
+          `/v13/deployments/${encodeURIComponent(deploymentId)}`
+        );
+        const state = data?.readyState;
+        if (state === "READY") return true;
+        if (state === "ERROR" || state === "CANCELED") {
+          throw new VercelApiError(
+            502,
+            `deployment_${state.toLowerCase()}`,
+            `GET /v13/deployments/${deploymentId}`,
+            data?.errorMessage ?? `Deployment ${deploymentId} ended in ${state}`
+          );
+        }
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remaining)));
+        delayMs = Math.min(delayMs * 2, 10_000);
       }
       return false;
     },

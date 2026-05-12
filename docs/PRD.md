@@ -275,15 +275,22 @@ Both are set in the Vercel project's env-var settings, never written into source
 
 ## Open questions
 
-- **PostHog project per product, or one project with `app_id` dimension?** v1
-  recommendation: one project with the dimension (simpler, works with PostHog's
-  existing dashboards). v1.5 could switch to per-product if event volume requires
-  isolation.
-- **GitHub OAuth App ownership:** is it under `bibleinnovationlab` GitHub user or
-  the `Bible-Innovation-Lab` org? Recommend the org (survives if Scott leaves).
-- **Token rotation cadence:** quarterly is the default in the design doc. Confirm
-  with security team.
 - **Cron job for orphan-subdomain scan:** valuable to have, but probably v2.
+
+## Resolved decisions (2026-05-12)
+
+- **PostHog model:** one project, `app_id` event dimension. Switch to per-product
+  only if event volume forces isolation (revisit at v1.5).
+- **GitHub OAuth App ownership:** registered under the `Bible-Innovation-Lab` org,
+  not a personal user. Survives staffing changes; transferable through the org's
+  developer settings.
+- **Token rotation cadence:** quarterly. YouVersion security can tighten the
+  cadence later; this is the floor, not the ceiling. Logged in the platform
+  runbook on each rotation.
+- **`VERCEL_TEAM_ID` discovery:** one-time lookup via Vercel CLI
+  (`vercel teams ls`) once a team admin runs `vercel login`. Stored only in the
+  service's Vercel env vars. Not knowable from this repo; flagged as a manual
+  bootstrap step in [implementation-plan.md](implementation-plan.md).
 
 ## Design references
 

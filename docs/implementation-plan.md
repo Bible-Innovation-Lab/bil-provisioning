@@ -277,15 +277,17 @@ chasing references across the launchpad + every student fork.
 | `auth.unit.test.ts` | Token verification with mocked Octokit responses; org membership pass/fail; admin team pass/fail; expired token handling |
 | `kv.unit.test.ts` | `claimAppId` returns false on collision; `releaseAppId` clears the row; TTL is set; `confirmClaim` extends/removes TTL |
 
-### Integration tests (against a sandbox Vercel team)
+### Integration tests — deferred (decision 2026-05-12)
 
-| Suite | Coverage |
-|---|---|
-| `provision.integration.test.ts` | Happy path (project created, domain attached, env vars set); concurrent app-id claim (one wins, one 400s); Vercel 5xx triggers claim release; non-member rejection |
-| `teardown.integration.test.ts` | Happy path (project deleted, domain removed, claim released); idempotent (re-running on a torn-down project doesn't error); admin-only |
+Originally planned: hit a sandbox Vercel team. Decided against for v1:
+the bootstrap-deploy rollout already exercises every API call end-to-end
+via Stage 4 (re-provision bible-trivia through the service). Integration
+tests add a maintenance tier we don't need yet.
 
-Integration tests require a Vercel "test" team — same plan as any prod-touching
-test suite. Don't run them against the real BIL team.
+Re-add when: (a) Vercel introduces a new API endpoint we depend on, or
+(b) we hit a Vercel-side bug at bootstrap that integration tests would
+have caught. If/when re-added, use Scott's personal Vercel account, not
+the BIL team — see [[bil-provisioning-decisions]] in the agent's memory.
 
 ### Manual verification
 
@@ -358,17 +360,15 @@ Before going live:
 - [ ] `/health` endpoint monitored by an external pinger (Pingdom / Better Stack)
 - [ ] PagerDuty / Slack alert on `/health` 5xx for > 5 min
 
-## Decisions to confirm before starting
+## Decisions resolved before starting (2026-05-12)
 
-These show up in the PRD as open questions; resolve before Phase 0:
+See PRD § "Resolved decisions" for the canonical record. Summary:
 
-1. **PostHog: one project with `app_id` dimension, or per-product projects?**
-   Default plan is one project (simpler). Reconfirm before writing `posthog-client.ts`.
-2. **GitHub OAuth App owner: `bibleinnovationlab` user vs. `Bible-Innovation-Lab` org?**
-   Recommend org. Confirm before Phase 0.
-3. **Token rotation cadence:** quarterly default. Confirm with YouVersion security.
-4. **`VERCEL_TEAM_ID` discovery:** can be looked up once via `gh api` / Vercel CLI;
-   needs to be confirmed and stored alongside the other env vars.
+1. **PostHog:** one project, `app_id` dimension on every event.
+2. **GitHub OAuth App owner:** `Bible-Innovation-Lab` org.
+3. **Token rotation cadence:** quarterly, logged in the platform runbook.
+4. **`VERCEL_TEAM_ID`:** discovered once during bootstrap deploy via
+   `vercel teams ls`, then pasted into the service's Vercel env vars.
 
 ## Estimated timeline
 

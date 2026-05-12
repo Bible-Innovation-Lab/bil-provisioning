@@ -32,17 +32,26 @@ function emptyResponse(status = 204): Response {
 }
 
 describe("createProject", () => {
-  it("POSTs to /v9/projects with teamId, body, and Bearer auth; surfaces repoId from link", async () => {
-    const fetchMock = vi.fn<FetchLike>(async () =>
-      jsonResponse(
-        {
-          id: "prj_new123",
-          name: "bible-trivia",
-          link: { type: "github", repoId: 12345, repo: "bible-trivia" },
-        },
-        200
-      )
-    );
+  it("POSTs name + framework + gitRepository, then PATCHes nodeVersion separately", async () => {
+    // Vercel rejects nodeVersion on the create endpoint, so the client splits
+    // it into POST /v9/projects + PATCH /v9/projects/{id}.
+    let call = 0;
+    const fetchMock = vi.fn<FetchLike>(async () => {
+      call += 1;
+      if (call === 1) {
+        return jsonResponse(
+          {
+            id: "prj_new123",
+            name: "bible-trivia",
+            link: { type: "github", repoId: 12345, repo: "bible-trivia" },
+          },
+          200
+        );
+      }
+      // PATCH response — Vercel echoes the project back, we only need it to
+      // be 2xx.
+      return jsonResponse({ id: "prj_new123", nodeVersion: "22.x" }, 200);
+    });
     const client = makeClient(fetchMock);
 
     const result = await client.createProject({
@@ -57,20 +66,47 @@ describe("createProject", () => {
       name: "bible-trivia",
       repoId: 12345,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe(
+    // First call: POST /v9/projects with framework but no nodeVersion.
+    const [createUrl, createInit] = fetchMock.mock.calls[0];
+    expect(String(createUrl)).toBe(
       `https://api.vercel.com/v9/projects?teamId=${TEAM}`
     );
-    expect(init?.method).toBe("POST");
-    expect((init?.headers as Record<string, string>)?.authorization).toBe(`Bearer ${TOKEN}`);
-    expect(JSON.parse(init?.body as string)).toEqual({
+    expect(createInit?.method).toBe("POST");
+    expect((createInit?.headers as Record<string, string>)?.authorization).toBe(
+      `Bearer ${TOKEN}`
+    );
+    expect(JSON.parse(createInit?.body as string)).toEqual({
       name: "bible-trivia",
-      nodeVersion: "22.x",
       framework: "nextjs",
       gitRepository: { type: "github", repo: "Bible-Innovation-Lab/bible-trivia" },
     });
+
+    // Second call: PATCH /v9/projects/prj_new123 with just nodeVersion.
+    const [patchUrl, patchInit] = fetchMock.mock.calls[1];
+    expect(String(patchUrl)).toBe(
+      `https://api.vercel.com/v9/projects/prj_new123?teamId=${TEAM}`
+    );
+    expect(patchInit?.method).toBe("PATCH");
+    expect(JSON.parse(patchInit?.body as string)).toEqual({ nodeVersion: "22.x" });
+  });
+
+  it("skips the PATCH when nodeVersion isn't requested", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(
+        { id: "prj_minimal", name: "x", link: { repoId: 1 } },
+        200
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    await client.createProject({
+      name: "x",
+      repo: "Bible-Innovation-Lab/x",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns repoId: null when Vercel omits the link object", async () => {

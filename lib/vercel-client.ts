@@ -214,9 +214,13 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         name?: string;
         link?: { repoId?: number } | null;
       };
+      // POST /v9/projects accepts framework + gitRepository but NOT
+      // nodeVersion ("Invalid request: should NOT have additional property
+      // nodeVersion"). nodeVersion is settable only via PATCH after creation.
+      // We do create + PATCH inside this method so the handler stays simple
+      // and the failure mode is uniform.
       const { data } = await request<ApiResp>("POST", "/v9/projects", {
         name,
-        nodeVersion,
         framework,
         gitRepository: {
           type: "github",
@@ -231,6 +235,18 @@ export function createVercelClient(config: VercelConfig): VercelClient {
           "Vercel returned no project id"
         );
       }
+
+      // Apply post-create settings that the create endpoint rejects. If the
+      // PATCH fails, the caller's catch block will delete the half-configured
+      // project — same recovery as any other vercel call failing mid-flow.
+      if (nodeVersion !== undefined) {
+        await request<unknown>(
+          "PATCH",
+          `/v9/projects/${encodeURIComponent(data.id)}`,
+          { nodeVersion }
+        );
+      }
+
       return {
         id: data.id,
         name: data.name ?? name,

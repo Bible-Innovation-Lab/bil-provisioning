@@ -181,6 +181,13 @@ export async function handleProvision(
       // in vercel-client.ts. These match the launchpad's build expectations.
       nodeVersion: "22.x",
       framework: "nextjs",
+      // Students push to their own forks from their own GitHub identities;
+      // bil-provisioning runs on a separate Vercel team they're not members
+      // of. Vercel's default gitForkProtection: true would block every
+      // student push with TEAM_ACCESS_REQUIRED. Disabling it makes
+      // GitHub repo push access the deploy boundary, which is the right
+      // model for the BIL setup (private org repos, per-student access).
+      gitForkProtection: false,
     });
     projectId = project.id;
     logFields.project_id = projectId;

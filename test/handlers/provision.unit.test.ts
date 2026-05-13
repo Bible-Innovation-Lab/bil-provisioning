@@ -300,12 +300,13 @@ describe("handleProvision — happy path", () => {
     const keys = setEnvCalls.map((c) => c[1]);
     expect(keys).toEqual(["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST"]);
 
-    // createProject was called with nodeVersion + framework explicit.
+    // createProject was called with nodeVersion + framework + gitForkProtection explicit.
     expect(createProjectCalls[0][0]).toMatchObject({
       name: "bible-trivia",
       repo: "Bible-Innovation-Lab/bible-trivia",
       nodeVersion: "22.x",
       framework: "nextjs",
+      gitForkProtection: false,
     });
 
     // Deployment was triggered against main + repoId from createProject.

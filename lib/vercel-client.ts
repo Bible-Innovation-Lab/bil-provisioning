@@ -46,10 +46,17 @@ export interface CreateProjectInput {
   //   - nodeVersion defaults to "24.x" which Vercel itself rejects at build
   //   - framework defaults to null which prevents framework-specific build
   //     optimizations (next.js cache splits, etc.)
-  // Both are settable post-hoc via PATCH /v9/projects/{id}, but doing it at
-  // create-time is one less round-trip and one less failure mode.
+  //   - gitForkProtection defaults to true, which blocks git pushes from
+  //     anyone not on the Vercel team with TEAM_ACCESS_REQUIRED. Since the
+  //     BIL provisioning model has students who push to GitHub but aren't
+  //     on the admin team that runs this service, we always disable it.
+  //     The security boundary is GitHub repo push access, which is what
+  //     gates pushes to the bibleinnovationlab.org subdomain anyway.
+  // All three are set via PATCH after creation (nodeVersion + gitForkProtection
+  // because POST rejects them; framework because it's accepted at create time).
   nodeVersion?: string;
   framework?: string | null;
+  gitForkProtection?: boolean;
 }
 
 export interface CreateProjectResult {
@@ -207,7 +214,7 @@ export function createVercelClient(config: VercelConfig): VercelClient {
   }
 
   return {
-    async createProject({ name, repo, nodeVersion, framework }) {
+    async createProject({ name, repo, nodeVersion, framework, gitForkProtection }) {
       // Raw Vercel response shape — wider than CreateProjectResult.
       type ApiResp = {
         id?: string;
@@ -215,8 +222,7 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         link?: { repoId?: number } | null;
       };
       // POST /v9/projects accepts framework + gitRepository but NOT
-      // nodeVersion ("Invalid request: should NOT have additional property
-      // nodeVersion"). nodeVersion is settable only via PATCH after creation.
+      // nodeVersion or gitForkProtection — both reject as additional properties.
       // We do create + PATCH inside this method so the handler stays simple
       // and the failure mode is uniform.
       const { data } = await request<ApiResp>("POST", "/v9/projects", {
@@ -236,14 +242,19 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         );
       }
 
-      // Apply post-create settings that the create endpoint rejects. If the
-      // PATCH fails, the caller's catch block will delete the half-configured
-      // project — same recovery as any other vercel call failing mid-flow.
-      if (nodeVersion !== undefined) {
+      // Apply post-create settings that the create endpoint rejects. Both
+      // are folded into one PATCH so a partial application can't happen.
+      // If the PATCH fails, the caller's catch block deletes the
+      // half-configured project — same recovery as any other vercel call
+      // failing mid-flow.
+      const patch: Record<string, unknown> = {};
+      if (nodeVersion !== undefined) patch.nodeVersion = nodeVersion;
+      if (gitForkProtection !== undefined) patch.gitForkProtection = gitForkProtection;
+      if (Object.keys(patch).length > 0) {
         await request<unknown>(
           "PATCH",
           `/v9/projects/${encodeURIComponent(data.id)}`,
-          { nodeVersion }
+          patch
         );
       }
 

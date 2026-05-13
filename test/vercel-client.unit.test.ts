@@ -32,9 +32,9 @@ function emptyResponse(status = 204): Response {
 }
 
 describe("createProject", () => {
-  it("POSTs name + framework + gitRepository, then PATCHes nodeVersion separately", async () => {
-    // Vercel rejects nodeVersion on the create endpoint, so the client splits
-    // it into POST /v9/projects + PATCH /v9/projects/{id}.
+  it("POSTs name + framework + gitRepository, then PATCHes nodeVersion + gitForkProtection in one call", async () => {
+    // Vercel rejects nodeVersion AND gitForkProtection on the create endpoint,
+    // so the client splits them into POST /v9/projects + one combined PATCH.
     let call = 0;
     const fetchMock = vi.fn<FetchLike>(async () => {
       call += 1;
@@ -50,7 +50,10 @@ describe("createProject", () => {
       }
       // PATCH response — Vercel echoes the project back, we only need it to
       // be 2xx.
-      return jsonResponse({ id: "prj_new123", nodeVersion: "22.x" }, 200);
+      return jsonResponse(
+        { id: "prj_new123", nodeVersion: "22.x", gitForkProtection: false },
+        200
+      );
     });
     const client = makeClient(fetchMock);
 
@@ -59,6 +62,7 @@ describe("createProject", () => {
       repo: "Bible-Innovation-Lab/bible-trivia",
       nodeVersion: "22.x",
       framework: "nextjs",
+      gitForkProtection: false,
     });
 
     expect(result).toEqual({
@@ -68,7 +72,7 @@ describe("createProject", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
-    // First call: POST /v9/projects with framework but no nodeVersion.
+    // First call: POST /v9/projects with framework but no nodeVersion/gitForkProtection.
     const [createUrl, createInit] = fetchMock.mock.calls[0];
     expect(String(createUrl)).toBe(
       `https://api.vercel.com/v9/projects?teamId=${TEAM}`
@@ -83,16 +87,19 @@ describe("createProject", () => {
       gitRepository: { type: "github", repo: "Bible-Innovation-Lab/bible-trivia" },
     });
 
-    // Second call: PATCH /v9/projects/prj_new123 with just nodeVersion.
+    // Second call: ONE PATCH /v9/projects/prj_new123 carrying BOTH settings.
     const [patchUrl, patchInit] = fetchMock.mock.calls[1];
     expect(String(patchUrl)).toBe(
       `https://api.vercel.com/v9/projects/prj_new123?teamId=${TEAM}`
     );
     expect(patchInit?.method).toBe("PATCH");
-    expect(JSON.parse(patchInit?.body as string)).toEqual({ nodeVersion: "22.x" });
+    expect(JSON.parse(patchInit?.body as string)).toEqual({
+      nodeVersion: "22.x",
+      gitForkProtection: false,
+    });
   });
 
-  it("skips the PATCH when nodeVersion isn't requested", async () => {
+  it("skips the PATCH when no post-create settings are requested", async () => {
     const fetchMock = vi.fn<FetchLike>(async () =>
       jsonResponse(
         { id: "prj_minimal", name: "x", link: { repoId: 1 } },
@@ -107,6 +114,33 @@ describe("createProject", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("PATCHes only the settings that are provided (gitForkProtection alone)", async () => {
+    let call = 0;
+    const fetchMock = vi.fn<FetchLike>(async () => {
+      call += 1;
+      if (call === 1) {
+        return jsonResponse(
+          { id: "prj_x", name: "x", link: { repoId: 1 } },
+          200
+        );
+      }
+      return jsonResponse({ id: "prj_x" }, 200);
+    });
+    const client = makeClient(fetchMock);
+
+    await client.createProject({
+      name: "x",
+      repo: "Bible-Innovation-Lab/x",
+      gitForkProtection: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, patchInit] = fetchMock.mock.calls[1];
+    expect(JSON.parse(patchInit?.body as string)).toEqual({
+      gitForkProtection: false,
+    });
   });
 
   it("returns repoId: null when Vercel omits the link object", async () => {

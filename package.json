@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:unit": "vitest run --dir test --testNamePattern='unit|.unit'",
-    "smoke": "vitest run --dir test --testPathPattern='unit'"
+    "redactor-sample": "bun scripts/redactor-sample.ts",
+    "smoke": "bun run typecheck && bun run test && bun run redactor-sample"
   },
   "dependencies": {
     "@octokit/request": "^9.2.4",

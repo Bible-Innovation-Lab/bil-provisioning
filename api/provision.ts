@@ -34,6 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         subdomainRoot: config.subdomainRoot,
         posthogKey: config.posthogKey,
         posthogHost: config.posthogHost,
+        youversionApiKey: config.youversionApiKey,
       },
     }
   );

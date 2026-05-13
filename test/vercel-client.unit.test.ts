@@ -474,6 +474,73 @@ describe("pollDeploymentReady", () => {
   });
 });
 
+describe("pollEnvReady", () => {
+  it("returns true on first poll when all required keys are present", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(
+        { envs: [{ key: "APP_ID" }, { key: "POSTHOG_KEY" }, { key: "YOUVERSION_API_KEY" }] },
+        200
+      )
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollEnvReady("prj_x", ["APP_ID", "YOUVERSION_API_KEY"]);
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`https://api.vercel.com/v9/projects/prj_x/env?teamId=${TEAM}`);
+  });
+
+  it("retries when keys are missing, returns true once they appear", async () => {
+    vi.useRealTimers();
+    const responses = [
+      { envs: [{ key: "APP_ID" }] },                         // missing YOUVERSION
+      { envs: [{ key: "APP_ID" }, { key: "YOUVERSION_API_KEY" }] }, // both now present
+    ];
+    let i = 0;
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse(responses[i++] ?? responses[responses.length - 1], 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollEnvReady(
+      "prj_x",
+      ["APP_ID", "YOUVERSION_API_KEY"],
+      { timeoutMs: 5_000 }
+    );
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns false on timeout when keys never appear", async () => {
+    vi.useRealTimers();
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ envs: [{ key: "APP_ID" }] }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollEnvReady(
+      "prj_x",
+      ["APP_ID", "YOUVERSION_API_KEY"],
+      { timeoutMs: 100 }
+    );
+    expect(ok).toBe(false);
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns true immediately when requiredKeys is empty (degenerate case)", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ envs: [] }, 200)
+    );
+    const client = makeClient(fetchMock);
+
+    const ok = await client.pollEnvReady("prj_x", []);
+    expect(ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("network failures", () => {
   it("converts a thrown fetch into VercelApiError(network_error, status=0)", async () => {
     const fetchMock = vi.fn<FetchLike>(async () => {

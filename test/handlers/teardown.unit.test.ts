@@ -60,6 +60,7 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
       url: "preview.vercel.app",
     })),
     pollDeploymentReady: vi.fn(async () => true),
+    pollEnvReady: vi.fn(async () => true),
   };
   return { ...base, ...overrides } as VercelClient;
 }

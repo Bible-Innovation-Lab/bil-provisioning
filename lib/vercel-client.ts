@@ -132,6 +132,11 @@ export interface VercelClient {
     deploymentId: string,
     opts?: { timeoutMs?: number }
   ): Promise<boolean>;
+  pollEnvReady(
+    projectId: string,
+    requiredKeys: string[],
+    opts?: { timeoutMs?: number }
+  ): Promise<boolean>;
 }
 
 export function createVercelClient(config: VercelConfig): VercelClient {
@@ -364,6 +369,30 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         if (remaining <= 0) break;
         await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remaining)));
         delayMs = Math.min(delayMs * 2, 10_000);
+      }
+      return false;
+    },
+
+    async pollEnvReady(projectId, requiredKeys, opts = {}) {
+      // Vercel's setEnv returns success before the value is queryable by a
+      // subsequent build trigger. Without this poll, createDeployment can
+      // race ahead and the build sees stale env state. Typically propagation
+      // takes 100-500ms; 10s default covers worst-case lag.
+      type ApiEnvResp = { envs?: Array<{ key: string }> };
+      const timeoutMs = opts.timeoutMs ?? 10_000;
+      const deadline = Date.now() + timeoutMs;
+      let delayMs = 250;
+      while (Date.now() < deadline) {
+        const { data } = await request<ApiEnvResp>(
+          "GET",
+          `/v9/projects/${encodeURIComponent(projectId)}/env`
+        );
+        const present = new Set((data?.envs ?? []).map((e) => e.key));
+        if (requiredKeys.every((k) => present.has(k))) return true;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remaining)));
+        delayMs = Math.min(delayMs * 2, 2_000);
       }
       return false;
     },

@@ -52,6 +52,7 @@ export interface ProvisionConfig {
   subdomainRoot: string;
   posthogKey: string;
   posthogHost: string;
+  youversionApiKey: string;
 }
 
 export interface ProvisionDeps {
@@ -218,6 +219,22 @@ export async function handleProvision(
       deps.config.posthogHost,
       ["production", "preview"],
       "plain"
+    );
+    await deps.vercel.setEnv(
+      projectId,
+      "YOUVERSION_API_KEY",
+      deps.config.youversionApiKey,
+      ["production", "preview"]
+    );
+
+    // Vercel env-var propagation isn't atomic — setEnv returns before the
+    // value is visible to a subsequent build. Poll until all required keys
+    // appear before triggering the first deployment, so the build doesn't
+    // see stale state.
+    await deps.vercel.pollEnvReady(
+      projectId,
+      ["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY"],
+      { timeoutMs: 10_000 }
     );
 
     // Trigger the first deployment. createProject + git-link does NOT

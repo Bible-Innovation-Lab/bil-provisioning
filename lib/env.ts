@@ -19,6 +19,11 @@ export interface ServiceConfig {
   posthogKey: string;
   posthogHost: string;
 
+  // YouVersion Platform API (injected into student projects so their
+  // server-side Bible lookups work). Header shape: `X-YVP-App-Key: <key>`.
+  // Get a key at https://platform.youversion.com.
+  youversionApiKey: string;
+
   // Service
   subdomainRoot: string;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -54,6 +59,7 @@ export function loadServiceConfig(): ServiceConfig {
     vercelTeamId: requireEnv("VERCEL_TEAM_ID"),
     posthogKey: requireEnv("POSTHOG_KEY"),
     posthogHost: optionalEnv("POSTHOG_HOST", "https://us.i.posthog.com"),
+    youversionApiKey: requireEnv("YOUVERSION_API_KEY"),
     subdomainRoot: requireEnv("SUBDOMAIN_ROOT"),
     logLevel: logLevel as ServiceConfig["logLevel"],
   };

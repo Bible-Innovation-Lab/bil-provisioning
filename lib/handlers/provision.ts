@@ -66,6 +66,12 @@ export interface ProvisionDeps {
   config: ProvisionConfig;
   now?: () => Date;
   requestId?: () => string;
+  // Debug-only escape hatch (PROVISION_DEBUG_KEEP_FAILED=1 in service env).
+  // When true, the rollback path skips deleteProject so a failed deployment's
+  // build log remains inspectable via `vercel inspect --logs`. Orphan Vercel
+  // projects must be manually cleaned up after each failed run. The KV claim
+  // is still released regardless.
+  debugKeepFailed?: boolean;
 }
 
 export interface ProvisionRequest {
@@ -83,7 +89,21 @@ export type ProvisionResponse =
       body: { error: "already_provisioned"; project_id: string; url: string };
     }
   | {
-      status: 400 | 401 | 403 | 500 | 502;
+      // 500 carries optional Vercel error context so the caller (setup.sh)
+      // can surface the real cause without log-spelunking. Other failure
+      // codes stay tight.
+      status: 500;
+      body: {
+        error: string;
+        vercel_code?: string;
+        vercel_status?: number;
+        message?: string;
+        project_id?: string;
+        deployment_id?: string;
+      };
+    }
+  | {
+      status: 400 | 401 | 403 | 502;
       body: { error: string };
     };
 
@@ -277,16 +297,22 @@ export async function handleProvision(
     // Project rollback first (best-effort), then claim release. Doing them
     // in this order means a deleteProject failure still results in the claim
     // being freed — students aren't locked out of the app_id by a Vercel
-    // hiccup during cleanup.
+    // hiccup during cleanup. Debug-mode skips the rollback so a failed
+    // deployment's build log stays inspectable.
     if (projectId !== null) {
-      await deps.vercel
-        .deleteProject(projectId)
-        .catch((err) =>
+      if (deps.debugKeepFailed) {
+        log("warn", "provision.debug_kept_failed_project", {
+          ...logFields,
+          project_id: projectId,
+        });
+      } else {
+        await deps.vercel.deleteProject(projectId).catch((err) =>
           log("warn", "provision.rollback_delete_failed", {
             ...logFields,
             error: String(err),
           })
         );
+      }
     }
     await releaseAppId(app_id, deps.kv).catch(() => undefined);
     if (e instanceof VercelApiError) {
@@ -296,7 +322,17 @@ export async function handleProvision(
         vercel_code: e.code,
         message: e.message,
       });
-      return { status: 500, body: { error: "vercel_api_error" } };
+      return {
+        status: 500,
+        body: {
+          error: "vercel_api_error",
+          vercel_code: e.code,
+          vercel_status: e.status,
+          message: e.message,
+          project_id: projectId ?? undefined,
+          deployment_id: (logFields.deployment_id as string | undefined) ?? undefined,
+        },
+      };
     }
     log("error", "provision.internal_error", { ...logFields, error: String(e) });
     return { status: 500, body: { error: "internal" } };

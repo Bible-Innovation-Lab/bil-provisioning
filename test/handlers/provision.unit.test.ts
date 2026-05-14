@@ -368,7 +368,7 @@ describe("handleProvision — rollback on Vercel failure", () => {
     );
 
     expect(result.status).toBe(500);
-    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(result.body).toMatchObject({ error: "vercel_api_error" });
     expect(await kv.get("app_id:new-app")).toBeNull();
     // No project was created, so no deletion should be attempted.
     expect(deleteProject).not.toHaveBeenCalled();
@@ -416,7 +416,7 @@ describe("handleProvision — rollback on Vercel failure", () => {
     );
 
     expect(result.status).toBe(500);
-    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(result.body).toMatchObject({ error: "vercel_api_error" });
     expect(await kv.get("app_id:deploy-fail")).toBeNull();
     expect(deleteProject).toHaveBeenCalledWith("prj_deploy-fail");
   });
@@ -446,7 +446,7 @@ describe("handleProvision — rollback on Vercel failure", () => {
     );
 
     expect(result.status).toBe(500);
-    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(result.body).toMatchObject({ error: "vercel_api_error" });
     expect(await kv.get("app_id:build-bad")).toBeNull();
     expect(deleteProject).toHaveBeenCalledWith("prj_build-bad");
   });
@@ -518,7 +518,7 @@ describe("handleProvision — rollback on Vercel failure", () => {
     );
 
     expect(result.status).toBe(500);
-    expect(result.body).toEqual({ error: "vercel_api_error" });
+    expect(result.body).toMatchObject({ error: "vercel_api_error" });
     expect(await kv.get("app_id:no-repo-id")).toBeNull();
     expect(deleteProject).toHaveBeenCalledWith("prj_no-repo-id");
   });

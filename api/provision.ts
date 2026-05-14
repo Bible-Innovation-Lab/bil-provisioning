@@ -28,6 +28,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     {
       kv,
       vercel,
+      // Debug flag: when set, the rollback skips deleteProject so failed
+      // deployment build logs stay inspectable. Must be manually unset
+      // when debugging is done — orphan projects accumulate otherwise.
+      debugKeepFailed: process.env.PROVISION_DEBUG_KEEP_FAILED === "1",
       config: {
         org: config.org,
         adminTeamSlug: config.adminTeamSlug,

@@ -39,7 +39,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         posthogKey: config.posthogKey,
         posthogHost: config.posthogHost,
         youversionApiKey: config.youversionApiKey,
-        ghLaunchpadToken: config.ghLaunchpadToken,
       },
     }
   );

@@ -53,10 +53,6 @@ export interface ProvisionConfig {
   posthogKey: string;
   posthogHost: string;
   youversionApiKey: string;
-  // Read-only PAT for the private @bil/launchpad source repo. Surfaced on
-  // each student project as GH_LAUNCHPAD_TOKEN so Vercel's build can clone
-  // the dep — see bil-app-template/vercel.json.
-  ghLaunchpadToken: string;
 }
 
 export interface ProvisionDeps {
@@ -250,15 +246,6 @@ export async function handleProvision(
       deps.config.youversionApiKey,
       ["production", "preview"]
     );
-    // Needed at build time, not runtime: bil-app-template/vercel.json
-    // installCommand uses this token to rewrite SSH URLs to HTTPS+token so
-    // the build sandbox can clone the private @bil/launchpad dep.
-    await deps.vercel.setEnv(
-      projectId,
-      "GH_LAUNCHPAD_TOKEN",
-      deps.config.ghLaunchpadToken,
-      ["production", "preview"]
-    );
 
     // Vercel env-var propagation isn't atomic — setEnv returns before the
     // value is visible to a subsequent build. Poll until all required keys
@@ -266,7 +253,7 @@ export async function handleProvision(
     // see stale state.
     await deps.vercel.pollEnvReady(
       projectId,
-      ["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY", "GH_LAUNCHPAD_TOKEN"],
+      ["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY"],
       { timeoutMs: 10_000 }
     );
 

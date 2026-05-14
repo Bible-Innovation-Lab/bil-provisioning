@@ -24,6 +24,13 @@ export interface ServiceConfig {
   // Get a key at https://platform.youversion.com.
   youversionApiKey: string;
 
+  // GitHub PAT scoped to read the private @bil/launchpad source repo.
+  // Injected into every student project as GH_LAUNCHPAD_TOKEN so Vercel's
+  // build sandbox can clone the git+ssh dep via an HTTPS rewrite in
+  // bil-app-template/vercel.json. Fine-grained, Contents:read on
+  // Bible-Innovation-Lab/launchpad only, rotated every 90 days.
+  ghLaunchpadToken: string;
+
   // Service
   subdomainRoot: string;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -60,6 +67,7 @@ export function loadServiceConfig(): ServiceConfig {
     posthogKey: requireEnv("POSTHOG_KEY"),
     posthogHost: optionalEnv("POSTHOG_HOST", "https://us.i.posthog.com"),
     youversionApiKey: requireEnv("YOUVERSION_API_KEY"),
+    ghLaunchpadToken: requireEnv("GH_LAUNCHPAD_TOKEN"),
     subdomainRoot: requireEnv("SUBDOMAIN_ROOT"),
     logLevel: logLevel as ServiceConfig["logLevel"],
   };

@@ -16,6 +16,7 @@ const CONFIG: ProvisionConfig = {
   posthogKey: "phc_testkey",
   posthogHost: "https://us.i.posthog.com",
   youversionApiKey: "yv_testkey",
+  ghLaunchpadToken: "ghp_testlaunchpadtoken",
 };
 
 const TOKEN = "Bearer ghu_testtokenvalueokay";
@@ -298,9 +299,15 @@ describe("handleProvision — happy path", () => {
     });
     expect(kv._ttlMs("app_id:bible-trivia")).toBeNull();
 
-    // setEnv was called for APP_ID, POSTHOG_KEY, POSTHOG_HOST, YOUVERSION_API_KEY.
+    // setEnv was called for APP_ID, POSTHOG_KEY, POSTHOG_HOST, YOUVERSION_API_KEY, GH_LAUNCHPAD_TOKEN.
     const keys = setEnvCalls.map((c) => c[1]);
-    expect(keys).toEqual(["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY"]);
+    expect(keys).toEqual([
+      "APP_ID",
+      "POSTHOG_KEY",
+      "POSTHOG_HOST",
+      "YOUVERSION_API_KEY",
+      "GH_LAUNCHPAD_TOKEN",
+    ]);
 
     // createProject was called with nodeVersion + framework + gitForkProtection explicit.
     expect(createProjectCalls[0][0]).toMatchObject({

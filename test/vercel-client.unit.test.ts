@@ -541,6 +541,23 @@ describe("pollEnvReady", () => {
   });
 });
 
+describe("enableWebAnalytics", () => {
+  it("POSTs { value: true } to /web/insights/toggle with projectId query", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({ value: true }, 200));
+    const client = makeClient(fetchMock);
+
+    await client.enableWebAnalytics("prj_abc123");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      `https://api.vercel.com/web/insights/toggle?teamId=${TEAM}&projectId=prj_abc123`
+    );
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({ value: true });
+  });
+});
+
 describe("network failures", () => {
   it("converts a thrown fetch into VercelApiError(network_error, status=0)", async () => {
     const fetchMock = vi.fn<FetchLike>(async () => {

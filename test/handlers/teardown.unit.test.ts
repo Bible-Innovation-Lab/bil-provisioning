@@ -50,6 +50,7 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
       name,
       repoId: 12345,
     })),
+    enableWebAnalytics: vi.fn(async () => undefined),
     addDomain: vi.fn(async () => undefined),
     setEnv: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),

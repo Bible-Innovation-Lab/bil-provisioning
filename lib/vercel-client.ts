@@ -6,7 +6,7 @@
 //   - Team scope: ?teamId=${VERCEL_TEAM_ID} (accepts the team's slug too)
 //   - Token redaction on any error path so tokens never reach logs.
 //
-// We don't pull in @vercel/sdk because (a) we only call 6 endpoints and (b) a
+// We don't pull in @vercel/sdk because (a) we only call a handful of endpoints and (b) a
 // thin wrapper is easier to audit when this is the service holding the admin
 // token.
 
@@ -116,6 +116,7 @@ export class VercelApiError extends Error {
 
 export interface VercelClient {
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
+  enableWebAnalytics(projectId: string): Promise<void>;
   addDomain(projectId: string, domain: string): Promise<void>;
   setEnv(
     projectId: string,
@@ -268,6 +269,17 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         name: data.name ?? name,
         repoId: data.link?.repoId ?? null,
       };
+    },
+
+    async enableWebAnalytics(projectId) {
+      // Parity with `vercel project web-analytics` — toggles the dashboard
+      // feature so @vercel/analytics in student apps actually collects data.
+      await request<{ value: boolean }>(
+        "POST",
+        "/web/insights/toggle",
+        { value: true },
+        { projectId }
+      );
     },
 
     async addDomain(projectId, domain) {

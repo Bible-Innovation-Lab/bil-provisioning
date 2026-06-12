@@ -57,6 +57,7 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
       name,
       repoId: 12345,
     })),
+    enableWebAnalytics: record("enableWebAnalytics", async () => undefined),
     addDomain: record("addDomain", async () => undefined),
     setEnv: record("setEnv", async () => undefined),
     deleteProject: record("deleteProject", async () => undefined),
@@ -254,6 +255,7 @@ describe("handleProvision — happy path", () => {
     const kv = new FakeKv();
     const setEnvCalls: unknown[][] = [];
     const createProjectCalls: unknown[][] = [];
+    const enableWebAnalyticsCalls: unknown[][] = [];
     const createDeploymentCalls: unknown[][] = [];
     const pollDeploymentCalls: unknown[][] = [];
     const vercel = fakeVercelClient({
@@ -264,6 +266,9 @@ describe("handleProvision — happy path", () => {
       }),
       setEnv: vi.fn(async (...args: unknown[]) => {
         setEnvCalls.push(args);
+      }),
+      enableWebAnalytics: vi.fn(async (...args: unknown[]) => {
+        enableWebAnalyticsCalls.push(args);
       }),
       createDeployment: vi.fn(async (...args: unknown[]) => {
         createDeploymentCalls.push(args);
@@ -310,6 +315,8 @@ describe("handleProvision — happy path", () => {
       framework: "nextjs",
       gitForkProtection: false,
     });
+
+    expect(enableWebAnalyticsCalls).toEqual([["prj_bible-trivia"]]);
 
     // Deployment was triggered against main + repoId from createProject.
     expect(createDeploymentCalls).toHaveLength(1);

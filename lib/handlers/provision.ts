@@ -225,6 +225,8 @@ export async function handleProvision(
       );
     }
 
+    await deps.vercel.enableWebAnalytics(projectId);
+
     await deps.vercel.addDomain(projectId, domain);
     await deps.vercel.setEnv(projectId, "APP_ID", app_id, ["production", "preview"], "plain");
     await deps.vercel.setEnv(

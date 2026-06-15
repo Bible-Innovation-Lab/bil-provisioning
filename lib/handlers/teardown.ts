@@ -10,7 +10,14 @@
 //   4. validate app_id format (regex; denylisted names are also rejected since
 //      they could never have been claimed — saves an unnecessary KV round-trip)
 //   5. read claim from KV
-//      - missing claim → 404 not_found
+//      - missing claim:
+//          - force=false (default) → 404 not_found
+//          - force=true            → orphan recovery: best-effort
+//            removeDomainFromTeam(<app_id>.<root>) and return 200. Used to
+//            clean up subdomains stranded in the team's domain pool by old
+//            provision failures (see provision.ts rollback fix). Safe to run
+//            against an already-clean state: 404 from Vercel is treated as
+//            already-gone.
 //      - pending claim (no project_id, still within TTL) → release KV row and
 //        return 200; nothing was ever fully provisioned, so there's no Vercel
 //        state to clean up
@@ -29,6 +36,12 @@ import { VercelApiError, type VercelClient } from "../vercel-client.js";
 
 const BodySchema = z.object({
   app_id: z.string(),
+  // Admin escape hatch: when true, a missing KV claim does NOT 404. Instead,
+  // the handler attempts a team-level removeDomainFromTeam for the computed
+  // <app_id>.<root>, returning 200. This is the only way to recover the
+  // orphan-domain-only state that older provision failures could leave
+  // behind. Has no effect when a KV claim exists.
+  force: z.boolean().optional(),
 });
 
 export interface TeardownConfig {
@@ -53,7 +66,15 @@ export interface TeardownRequest {
 export type TeardownResponse =
   | {
       status: 200;
-      body: { app_id: string; project_id: string | null; released: true };
+      body: {
+        app_id: string;
+        project_id: string | null;
+        released: true;
+        // Set when the 200 came from the force-recovery branch (no KV row;
+        // best-effort team-level domain delete). Lets callers distinguish a
+        // real teardown from an orphan cleanup.
+        forced?: true;
+      };
     }
   | {
       status: 400 | 401 | 403 | 404 | 500 | 502;
@@ -102,8 +123,9 @@ export async function handleTeardown(
     });
     return { status: 400, body: { error: "malformed_body" } };
   }
-  const { app_id } = parsed.data;
+  const { app_id, force } = parsed.data;
   logFields.app_id = app_id;
+  if (force) logFields.force = true;
 
   // 4. Validate app_id (cheap pre-check; rejects garbage before KV)
   const validation = validateAppId(app_id);
@@ -115,6 +137,38 @@ export async function handleTeardown(
   // 5. Look up claim
   const claim = await getClaim(app_id, deps.kv);
   if (!claim) {
+    // Orphan-domain recovery path. Without force, this is the normal
+    // "nothing to tear down" 404. With force, the admin is asserting that
+    // the subdomain may still be lingering in the team's domain pool from
+    // an old provision failure (see provision.ts rollback) and we should
+    // best-effort delete it. 404 from Vercel here means already-clean and
+    // is treated as success — the operation is idempotent.
+    if (force) {
+      const orphanDomain = `${app_id}.${deps.config.subdomainRoot}`;
+      try {
+        await deps.vercel.removeDomainFromTeam(orphanDomain);
+        log("info", "teardown.force_removed_orphan_domain", { ...logFields });
+      } catch (e) {
+        if (e instanceof VercelApiError && e.status === 404) {
+          log("info", "teardown.force_orphan_domain_already_gone", { ...logFields });
+        } else if (e instanceof VercelApiError) {
+          log("error", "teardown.vercel_error", {
+            ...logFields,
+            vercel_status: e.status,
+            vercel_code: e.code,
+            message: e.message,
+          });
+          return { status: 500, body: { error: "vercel_api_error" } };
+        } else {
+          log("error", "teardown.internal_error", { ...logFields, error: String(e) });
+          return { status: 500, body: { error: "internal" } };
+        }
+      }
+      return {
+        status: 200,
+        body: { app_id, project_id: null, released: true, forced: true },
+      };
+    }
     log("info", "teardown.not_found", { ...logFields });
     return { status: 404, body: { error: "not_found" } };
   }

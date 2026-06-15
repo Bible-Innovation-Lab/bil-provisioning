@@ -311,6 +311,32 @@ describe("removeDomain", () => {
   });
 });
 
+describe("removeDomainFromTeam", () => {
+  it("DELETEs /v6/domains/{domain} at the team level", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => emptyResponse(204));
+    const client = makeClient(fetchMock);
+
+    await client.removeDomainFromTeam("orphan.bibleinnovationlab.org");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      `https://api.vercel.com/v6/domains/orphan.bibleinnovationlab.org?teamId=${TEAM}`
+    );
+    expect(init?.method).toBe("DELETE");
+  });
+
+  it("propagates 404 as VercelApiError (caller decides if already-gone is success)", async () => {
+    const fetchMock = vi.fn<FetchLike>(async () =>
+      jsonResponse({ error: { code: "not_found", message: "Domain not found" } }, 404)
+    );
+    const client = makeClient(fetchMock);
+
+    await expect(
+      client.removeDomainFromTeam("orphan.bibleinnovationlab.org")
+    ).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+});
+
 describe("pollCertReady", () => {
   it("returns true immediately if first poll reports misconfigured=false", async () => {
     const fetchMock = vi.fn<FetchLike>(async () =>

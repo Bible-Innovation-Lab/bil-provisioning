@@ -13,7 +13,8 @@
 //        return 409 with existing project_id)
 //   7. try: createProject → addDomain → setEnv × 3 → createDeployment →
 //      pollDeploymentReady → pollCertReady → confirmClaim → 201
-//   8. catch: deleteProject (best-effort) → releaseAppId → 500
+//   8. catch: removeDomain (best-effort) → deleteProject (best-effort) →
+//      releaseAppId → 500
 //   9. log structured event regardless of outcome
 //
 // Note on step 7: linking a Vercel project to a GitHub repo via createProject
@@ -295,6 +296,20 @@ export async function handleProvision(
           project_id: projectId,
         });
       } else {
+        // Detach the subdomain BEFORE deleting the project. deleteProject
+        // alone does not release the team-level claim on a custom subdomain,
+        // so without this any failure after addDomain (very commonly: the
+        // first deployment's build fails) leaves <app_id>.<root> orphaned
+        // in the team's domain pool. The next retry then 409s on addDomain
+        // even though the project itself is gone. Best-effort: addDomain
+        // may not have actually succeeded yet (e.g. createProject failed),
+        // in which case Vercel returns 404 and we just log and continue.
+        await deps.vercel.removeDomain(projectId, domain).catch((err) =>
+          log("warn", "provision.rollback_remove_domain_failed", {
+            ...logFields,
+            error: String(err),
+          })
+        );
         await deps.vercel.deleteProject(projectId).catch((err) =>
           log("warn", "provision.rollback_delete_failed", {
             ...logFields,

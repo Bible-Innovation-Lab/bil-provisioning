@@ -62,6 +62,7 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
     setEnv: record("setEnv", async () => undefined),
     deleteProject: record("deleteProject", async () => undefined),
     removeDomain: record("removeDomain", async () => undefined),
+    removeDomainFromTeam: record("removeDomainFromTeam", async () => undefined),
     pollCertReady: record("pollCertReady", async () => true),
     createDeployment: record(
       "createDeployment",
@@ -449,6 +450,99 @@ describe("handleProvision — rollback on Vercel failure", () => {
     expect(result.body).toMatchObject({ error: "vercel_api_error" });
     expect(await kv.get("app_id:build-bad")).toBeNull();
     expect(deleteProject).toHaveBeenCalledWith("prj_build-bad");
+  });
+
+  it("removes the subdomain BEFORE deleting the project on failure-after-addDomain", async () => {
+    // Regression: deleteProject alone does NOT release a custom subdomain
+    // back to the team's domain pool. Without an explicit removeDomain
+    // first, any failure after addDomain (the very common "first build
+    // failed" case) leaves <app_id>.<root> orphaned, and the next retry
+    // 409s on addDomain even though the project itself is gone.
+    const kv = new FakeKv();
+    const callOrder: string[] = [];
+    const removeDomain = vi.fn(async (projectId: string, domain: string) => {
+      callOrder.push(`removeDomain:${projectId}:${domain}`);
+    });
+    const deleteProject = vi.fn(async (projectId: string) => {
+      callOrder.push(`deleteProject:${projectId}`);
+    });
+    const vercel = fakeVercelClient({
+      pollDeploymentReady: vi.fn(async () => {
+        throw new VercelApiError(
+          502,
+          "deployment_error",
+          "GET /v13/deployments/dpl_x",
+          "Build failed"
+        );
+      }),
+      removeDomain,
+      deleteProject,
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/build-bust", app_id: "build-bust" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(removeDomain).toHaveBeenCalledWith(
+      "prj_build-bust",
+      "build-bust.bibleinnovationlab.org"
+    );
+    expect(deleteProject).toHaveBeenCalledWith("prj_build-bust");
+    expect(callOrder).toEqual([
+      "removeDomain:prj_build-bust:build-bust.bibleinnovationlab.org",
+      "deleteProject:prj_build-bust",
+    ]);
+    expect(await kv.get("app_id:build-bust")).toBeNull();
+  });
+
+  it("rollback still proceeds when removeDomain itself fails (e.g. addDomain never landed)", async () => {
+    // If createProject succeeded but addDomain failed, the subsequent
+    // removeDomain call in the rollback path will 404. That must NOT abort
+    // the rollback — deleteProject still needs to run and the claim still
+    // needs to be released.
+    const kv = new FakeKv();
+    const deleteProject = vi.fn(async () => undefined);
+    const removeDomain = vi.fn(async () => {
+      throw new VercelApiError(
+        404,
+        "not_found",
+        "DELETE /v9/projects/prj_x/domains/y",
+        "domain not attached"
+      );
+    });
+    const vercel = fakeVercelClient({
+      addDomain: vi.fn(async () => {
+        throw new VercelApiError(
+          503,
+          "service_unavailable",
+          "POST /v10/projects/x/domains",
+          "down"
+        );
+      }),
+      removeDomain,
+      deleteProject,
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/domain-flap", app_id: "domain-flap" },
+      },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(removeDomain).toHaveBeenCalledWith(
+      "prj_domain-flap",
+      "domain-flap.bibleinnovationlab.org"
+    );
+    expect(deleteProject).toHaveBeenCalledWith("prj_domain-flap");
+    expect(await kv.get("app_id:domain-flap")).toBeNull();
   });
 
   it("still releases the claim when project rollback itself fails (deleteProject 5xx)", async () => {

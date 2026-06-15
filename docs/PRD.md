@@ -107,8 +107,16 @@ narrower GitHub group than just "org member").
 **Body:**
 
 ```json
-{ "app_id": "old-product-name" }
+{ "app_id": "old-product-name", "force": false }
 ```
+
+`force` is optional and defaults to false. When true, a missing KV claim no
+longer 404s — instead the handler best-effort releases `<app_id>.<root>` at
+the team-domain level via `DELETE /v6/domains/...`. This is the admin
+escape hatch for orphan-domain-only state (subdomain stuck in the team's
+domain pool with no owning project — usually the residue of an old
+provision failure that crashed mid-rollback). Idempotent: a 404 from
+Vercel is treated as already-clean.
 
 **Side effects:**
 
@@ -116,6 +124,12 @@ narrower GitHub group than just "org member").
 2. Delete the Vercel project.
 3. Delete the KV claim row.
 4. Append to a teardown audit log (Vercel logs or a dedicated KV list).
+
+Force-recovery path (KV claim missing + `force: true`):
+
+1. Best-effort `DELETE /v6/domains/<app_id>.<root>` to release the orphan
+   subdomain at the team level.
+2. Return 200 with `{ forced: true, project_id: null }`.
 
 ### F3: `GET /status?app_id=<id>` (optional, for admin tools)
 

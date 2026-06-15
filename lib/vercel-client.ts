@@ -127,6 +127,10 @@ export interface VercelClient {
   ): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
   removeDomain(projectId: string, domain: string): Promise<void>;
+  // Team-level domain removal. Use only for orphan-domain recovery (admin
+  // /teardown with force=true) — normal teardown unassigns the domain from
+  // its project first, which is sufficient to release the subdomain.
+  removeDomainFromTeam(domain: string): Promise<void>;
   pollCertReady(domain: string, opts?: { timeoutMs?: number }): Promise<boolean>;
   createDeployment(input: CreateDeploymentInput): Promise<CreateDeploymentResult>;
   pollDeploymentReady(
@@ -316,6 +320,16 @@ export function createVercelClient(config: VercelConfig): VercelClient {
         "DELETE",
         `/v9/projects/${encodeURIComponent(projectId)}/domains/${encodeURIComponent(domain)}`
       );
+    },
+
+    async removeDomainFromTeam(domain) {
+      // Fully releases a subdomain from the team's domain pool. Used by
+      // /teardown force-recovery when the owning project is already gone
+      // (e.g. an old provision failure that orphaned the subdomain before
+      // bug-fix lib/handlers/provision.ts:rollback-removeDomain landed).
+      // Project-scoped removeDomain can't help here because there is no
+      // project to address.
+      await request<unknown>("DELETE", `/v6/domains/${encodeURIComponent(domain)}`);
     },
 
     async pollCertReady(domain, opts = {}) {

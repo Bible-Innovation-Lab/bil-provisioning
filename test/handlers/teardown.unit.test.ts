@@ -55,6 +55,7 @@ function fakeVercelClient(overrides: Partial<VercelClient> = {}): VercelClient {
     setEnv: vi.fn(async () => undefined),
     deleteProject: vi.fn(async () => undefined),
     removeDomain: vi.fn(async () => undefined),
+    removeDomainFromTeam: vi.fn(async () => undefined),
     pollCertReady: vi.fn(async () => true),
     createDeployment: vi.fn(async (input: { projectId: string }) => ({
       id: `dpl_${input.projectId}`,
@@ -192,6 +193,14 @@ describe("handleTeardown — KV lookup", () => {
     expect(result.body).toEqual({ error: "not_found" });
   });
 
+  it("returns 404 not_found when no claim exists and force=false explicitly", async () => {
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "ghost", force: false } },
+      buildDeps()
+    );
+    expect(result.status).toBe(404);
+  });
+
   it("releases a pending claim (no project_id) without calling Vercel", async () => {
     const kv = new FakeKv();
     await seedClaim(kv, "pending-app", {
@@ -296,6 +305,161 @@ describe("handleTeardown — Vercel 404 tolerance", () => {
 
     expect(result.status).toBe(200);
     expect(await kv.get("app_id:stale-project")).toBeNull();
+  });
+});
+
+describe("handleTeardown — force-recovery for orphan-domain-only state", () => {
+  // Orphan-domain-only state: KV claim is gone (or never existed) but the
+  // subdomain is still hanging around in the team's domain pool. This is
+  // exactly the state old provision failures could leave behind before the
+  // rollback fix. Without force=true, the handler 404s and the admin has
+  // no recourse short of poking the Vercel dashboard by hand.
+  it("calls removeDomainFromTeam and returns 200 when no KV row + force=true", async () => {
+    const kv = new FakeKv();
+    const removeDomain = vi.fn(async () => undefined);
+    const deleteProject = vi.fn(async () => undefined);
+    const removeDomainFromTeam = vi.fn(async () => undefined);
+    const vercel = fakeVercelClient({
+      removeDomain,
+      deleteProject,
+      removeDomainFromTeam,
+    });
+
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "orphan-app", force: true } },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({
+      app_id: "orphan-app",
+      project_id: null,
+      released: true,
+      forced: true,
+    });
+    expect(removeDomainFromTeam).toHaveBeenCalledWith(
+      "orphan-app.bibleinnovationlab.org"
+    );
+    // Project-scoped removeDomain / deleteProject aren't called — there's
+    // no project to address; the whole point is recovering after deleteProject
+    // already ran.
+    expect(removeDomain).not.toHaveBeenCalled();
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("treats removeDomainFromTeam 404 as already-clean and returns 200 (idempotent)", async () => {
+    const kv = new FakeKv();
+    const vercel = fakeVercelClient({
+      removeDomainFromTeam: vi.fn(async () => {
+        throw new VercelApiError(
+          404,
+          "not_found",
+          "DELETE /v6/domains/x",
+          "domain not found"
+        );
+      }),
+    });
+
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "already-clean", force: true } },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ forced: true, released: true });
+  });
+
+  it("returns 500 when removeDomainFromTeam 5xxs (admin should retry)", async () => {
+    const kv = new FakeKv();
+    const vercel = fakeVercelClient({
+      removeDomainFromTeam: vi.fn(async () => {
+        throw new VercelApiError(
+          503,
+          "service_unavailable",
+          "DELETE /v6/domains/x",
+          "down"
+        );
+      }),
+    });
+
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "flaky-orphan", force: true } },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: "vercel_api_error" });
+  });
+
+  it("returns 500 internal on non-VercelApiError failure during force recovery", async () => {
+    const kv = new FakeKv();
+    const vercel = fakeVercelClient({
+      removeDomainFromTeam: vi.fn(async () => {
+        throw new TypeError("nope");
+      }),
+    });
+
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "explody-orphan", force: true } },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(500);
+    expect(result.body).toEqual({ error: "internal" });
+  });
+
+  it("force=true is a no-op when a normal claim exists (takes the regular path)", async () => {
+    // The flag is purely a missing-KV-row escape hatch. If the claim is
+    // there, the normal teardown logic runs and the team-level domain
+    // delete is NOT invoked.
+    const kv = new FakeKv();
+    await seedClaim(kv, "real-app", {
+      repo: "Bible-Innovation-Lab/real-app",
+      projectId: "prj_real",
+    });
+    const removeDomain = vi.fn(async () => undefined);
+    const deleteProject = vi.fn(async () => undefined);
+    const removeDomainFromTeam = vi.fn(async () => undefined);
+    const vercel = fakeVercelClient({
+      removeDomain,
+      deleteProject,
+      removeDomainFromTeam,
+    });
+
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "real-app", force: true } },
+      buildDeps({ kv, vercel })
+    );
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({
+      app_id: "real-app",
+      project_id: "prj_real",
+      released: true,
+    });
+    expect(removeDomain).toHaveBeenCalledWith(
+      "prj_real",
+      "real-app.bibleinnovationlab.org"
+    );
+    expect(deleteProject).toHaveBeenCalledWith("prj_real");
+    expect(removeDomainFromTeam).not.toHaveBeenCalled();
+  });
+
+  it("still requires admin auth — non-admin cannot force-recover", async () => {
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "orphan-app", force: true } },
+      buildDeps({ octokit: makeOctokitNotAdmin() })
+    );
+    expect(result.status).toBe(403);
+  });
+
+  it("still validates app_id format — force=true cannot bypass validation", async () => {
+    const result = await handleTeardown(
+      { authorization: TOKEN, body: { app_id: "BadCase", force: true } },
+      buildDeps()
+    );
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ error: "app_id_invalid" });
   });
 });
 

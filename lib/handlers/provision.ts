@@ -54,6 +54,12 @@ export interface ProvisionConfig {
   posthogKey: string;
   posthogHost: string;
   youversionApiKey: string;
+  // Shared Upstash Redis (REST) credentials injected into student projects
+  // for multiplayer (`@bil/launchpad/realtime`). Optional: when either is
+  // empty/undefined, the keys are not injected and apps fall back to a
+  // dev-only in-memory store. Inject as a pair or not at all.
+  appUpstashRedisRestUrl?: string;
+  appUpstashRedisRestToken?: string;
 }
 
 export interface ProvisionDeps {
@@ -250,13 +256,45 @@ export async function handleProvision(
       ["production", "preview"]
     );
 
+    // Multiplayer: inject the shared Upstash Redis credentials so games
+    // built on `@bil/launchpad/realtime` get cross-invocation state out of
+    // the box. Only when BOTH are configured on the service — a half pair is
+    // useless (the store needs url + token together) and is treated as "not
+    // configured" so the app cleanly falls back to its dev in-memory store.
+    const injectUpstash = Boolean(
+      deps.config.appUpstashRedisRestUrl && deps.config.appUpstashRedisRestToken
+    );
+    if (injectUpstash) {
+      await deps.vercel.setEnv(
+        projectId,
+        "UPSTASH_REDIS_REST_URL",
+        deps.config.appUpstashRedisRestUrl as string,
+        ["production", "preview"]
+      );
+      await deps.vercel.setEnv(
+        projectId,
+        "UPSTASH_REDIS_REST_TOKEN",
+        deps.config.appUpstashRedisRestToken as string,
+        ["production", "preview"]
+      );
+    }
+    logFields.multiplayer_enabled = injectUpstash;
+
     // Vercel env-var propagation isn't atomic — setEnv returns before the
     // value is visible to a subsequent build. Poll until all required keys
     // appear before triggering the first deployment, so the build doesn't
     // see stale state.
     await deps.vercel.pollEnvReady(
       projectId,
-      ["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY"],
+      [
+        "APP_ID",
+        "POSTHOG_KEY",
+        "POSTHOG_HOST",
+        "YOUVERSION_API_KEY",
+        ...(injectUpstash
+          ? ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"]
+          : []),
+      ],
       { timeoutMs: 10_000 }
     );
 

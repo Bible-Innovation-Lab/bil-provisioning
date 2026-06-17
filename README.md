@@ -19,7 +19,12 @@ forking the template. The service:
 3. Validates the requested `app-id` (regex + denylist + atomic claim).
 4. Imports the student's repo into the BIL Vercel team as a new project.
 5. Attaches `<app-id>.bibleinnovationlab.org` as the project domain.
-6. Injects `APP_ID`, `POSTHOG_KEY`, `NODE_ENV` env vars.
+6. Injects `APP_ID`, `POSTHOG_KEY`, `POSTHOG_HOST`, `YOUVERSION_API_KEY` env vars
+   — plus the shared `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` pair
+   for multiplayer when `APP_UPSTASH_REDIS_REST_*` is configured on this service
+   (see `.env.example`). Apps built on `@bil/launchpad/realtime` then get
+   cross-invocation state with no setup; if the shared store isn't configured,
+   injection is skipped and apps fall back to a dev-only in-memory store.
 7. Returns the live URL.
 
 **The whole point:** the BIL Vercel team API token and the PostHog admin token

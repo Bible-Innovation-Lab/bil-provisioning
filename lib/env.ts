@@ -24,6 +24,19 @@ export interface ServiceConfig {
   // Get a key at https://platform.youversion.com.
   youversionApiKey: string;
 
+  // Shared Upstash Redis (REST) for student-app multiplayer. Injected into
+  // each provisioned project as UPSTASH_REDIS_REST_URL/_TOKEN so games built
+  // on `@bil/launchpad/realtime` get cross-invocation state with zero config.
+  //
+  // OPTIONAL: when either is empty, provisioning simply skips injecting them
+  // (apps fall back to a dev-only in-memory store). This keeps a running
+  // provisioning service working before the shared Upstash instance exists.
+  //
+  // NOTE: this is a DIFFERENT Upstash instance from the service's own
+  // KV_REST_API_* claim store — student apps must never touch the claim DB.
+  appUpstashRedisRestUrl: string;
+  appUpstashRedisRestToken: string;
+
   // Service
   subdomainRoot: string;
   logLevel: "debug" | "info" | "warn" | "error";
@@ -60,6 +73,8 @@ export function loadServiceConfig(): ServiceConfig {
     posthogKey: requireEnv("POSTHOG_KEY"),
     posthogHost: optionalEnv("POSTHOG_HOST", "https://us.i.posthog.com"),
     youversionApiKey: requireEnv("YOUVERSION_API_KEY"),
+    appUpstashRedisRestUrl: optionalEnv("APP_UPSTASH_REDIS_REST_URL", ""),
+    appUpstashRedisRestToken: optionalEnv("APP_UPSTASH_REDIS_REST_TOKEN", ""),
     subdomainRoot: requireEnv("SUBDOMAIN_ROOT"),
     logLevel: logLevel as ServiceConfig["logLevel"],
   };

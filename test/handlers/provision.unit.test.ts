@@ -332,6 +332,115 @@ describe("handleProvision — happy path", () => {
     expect(pollDeploymentCalls[0][0]).toBe("dpl_prj_bible-trivia");
   });
 
+  it("does NOT inject Upstash env when the service has no shared store configured", async () => {
+    const setEnvCalls: unknown[][] = [];
+    const pollEnvCalls: unknown[][] = [];
+    const vercel = fakeVercelClient({
+      setEnv: vi.fn(async (...args: unknown[]) => {
+        setEnvCalls.push(args);
+      }),
+      pollEnvReady: vi.fn(async (...args: unknown[]) => {
+        pollEnvCalls.push(args);
+        return true;
+      }),
+    });
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/no-mp", app_id: "no-mp" },
+      },
+      buildDeps({ vercel }) // CONFIG has no appUpstash* fields
+    );
+
+    expect(result.status).toBe(201);
+    const keys = setEnvCalls.map((c) => c[1]);
+    expect(keys).toEqual(["APP_ID", "POSTHOG_KEY", "POSTHOG_HOST", "YOUVERSION_API_KEY"]);
+    // pollEnvReady must only wait on the keys we actually set.
+    expect(pollEnvCalls[0][1]).toEqual([
+      "APP_ID",
+      "POSTHOG_KEY",
+      "POSTHOG_HOST",
+      "YOUVERSION_API_KEY",
+    ]);
+  });
+
+  it("injects Upstash multiplayer env when the shared store is configured", async () => {
+    const setEnvCalls: unknown[][] = [];
+    const pollEnvCalls: unknown[][] = [];
+    const vercel = fakeVercelClient({
+      setEnv: vi.fn(async (...args: unknown[]) => {
+        setEnvCalls.push(args);
+      }),
+      pollEnvReady: vi.fn(async (...args: unknown[]) => {
+        pollEnvCalls.push(args);
+        return true;
+      }),
+    });
+
+    const config: ProvisionConfig = {
+      ...CONFIG,
+      appUpstashRedisRestUrl: "https://shared.upstash.io",
+      appUpstashRedisRestToken: "upstash_tok_123",
+    };
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/with-mp", app_id: "with-mp" },
+      },
+      buildDeps({ vercel, config })
+    );
+
+    expect(result.status).toBe(201);
+
+    // Both Upstash keys are set with the configured values on prod+preview.
+    const byKey = new Map(setEnvCalls.map((c) => [c[1], c]));
+    expect([...byKey.keys()]).toEqual([
+      "APP_ID",
+      "POSTHOG_KEY",
+      "POSTHOG_HOST",
+      "YOUVERSION_API_KEY",
+      "UPSTASH_REDIS_REST_URL",
+      "UPSTASH_REDIS_REST_TOKEN",
+    ]);
+    expect(byKey.get("UPSTASH_REDIS_REST_URL")?.[2]).toBe("https://shared.upstash.io");
+    expect(byKey.get("UPSTASH_REDIS_REST_TOKEN")?.[2]).toBe("upstash_tok_123");
+    expect(byKey.get("UPSTASH_REDIS_REST_URL")?.[3]).toEqual(["production", "preview"]);
+
+    // And we wait for them to propagate before deploying.
+    expect(pollEnvCalls[0][1]).toContain("UPSTASH_REDIS_REST_URL");
+    expect(pollEnvCalls[0][1]).toContain("UPSTASH_REDIS_REST_TOKEN");
+  });
+
+  it("skips Upstash injection when only one of the pair is configured", async () => {
+    const setEnvCalls: unknown[][] = [];
+    const vercel = fakeVercelClient({
+      setEnv: vi.fn(async (...args: unknown[]) => {
+        setEnvCalls.push(args);
+      }),
+    });
+
+    const config: ProvisionConfig = {
+      ...CONFIG,
+      appUpstashRedisRestUrl: "https://shared.upstash.io",
+      // token intentionally missing — a half pair is unusable.
+    };
+
+    const result = await handleProvision(
+      {
+        authorization: TOKEN,
+        body: { repo: "Bible-Innovation-Lab/half-mp", app_id: "half-mp" },
+      },
+      buildDeps({ vercel, config })
+    );
+
+    expect(result.status).toBe(201);
+    const keys = setEnvCalls.map((c) => c[1]);
+    expect(keys).not.toContain("UPSTASH_REDIS_REST_URL");
+    expect(keys).not.toContain("UPSTASH_REDIS_REST_TOKEN");
+  });
+
   it("cert-poll failure does not fail the request", async () => {
     const vercel = fakeVercelClient({
       pollCertReady: vi.fn(async () => {

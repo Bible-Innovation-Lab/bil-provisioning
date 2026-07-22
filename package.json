@@ -16,8 +16,8 @@
   "dependencies": {
     "@octokit/request": "^9.2.4",
     "@vercel/kv": "^3.0.0",
-    "hono": "^4.12.30",
-    "posthog-node": "^5.45.2",
+    "hono": "^4.12.31",
+    "posthog-node": "^5.46.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
